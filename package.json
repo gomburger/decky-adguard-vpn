@@ -1,0 +1,16 @@
+{
+  "name": "decky-adguard-vpn",
+  "version": "0.7.1",
+  "description": "Unofficial Decky plugin to control the official AdGuard VPN CLI from the Steam Deck Quick Access menu. Not affiliated with AdGuard.",
+  "author": "gomburger",
+  "homepage": "https://github.com/gomburger/decky-adguard-vpn#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gomburger/decky-adguard-vpn.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gomburger/decky-adguard-vpn/issues"
+  },
+  "type": "module",
+  "license": "MIT"
+}

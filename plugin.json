@@ -1,0 +1,17 @@
+{
+  "name": "AdGuard VPN",
+  "author": "gomburger",
+  "flags": [
+    "root"
+  ],
+  "api_version": 1,
+  "publish": {
+    "tags": [
+      "vpn",
+      "network",
+      "adguard"
+    ],
+    "description": "[Unofficial] Turn AdGuard VPN on and off and choose a location from the Quick Access menu, using the official AdGuard VPN CLI. Personal project, not affiliated with AdGuard. / [비공식] Quick Access 메뉴에서 공식 AdGuard VPN CLI로 VPN을 켜고 끄고 위치를 고릅니다. AdGuard와 관련 없는 개인 제작 플러그인입니다.",
+    "image": ""
+  }
+}

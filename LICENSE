@@ -1,0 +1,57 @@
+MIT License
+
+Copyright (c) 2026 gomburger
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-------------------------------------------------------------------------------
+Third-party notices
+-------------------------------------------------------------------------------
+
+py_modules/qr.py follows the structure of the QR Code generator library by
+Project Nayuki (https://www.nayuki.io/page/qr-code-generator-library),
+which is distributed under the MIT License:
+
+    Copyright (c) Project Nayuki. (MIT License)
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy of
+    this software and associated documentation files (the "Software"), to deal in
+    the Software without restriction, including without limitation the rights to
+    use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+    the Software, and to permit persons to whom the Software is furnished to do so,
+    subject to the following conditions:
+    - The above copyright notice and this permission notice shall be included in
+      all copies or substantial portions of the Software.
+    - The Software is provided "as is", without warranty of any kind, express or
+      implied, including but not limited to the warranties of merchantability,
+      fitness for a particular purpose and noninfringement. In no event shall the
+      authors or copyright holders be liable for any claim, damages or other
+      liability, whether in an action of contract, tort or otherwise, arising from,
+      out of or in connection with the Software or the use or other dealings in the
+      Software.
+
+keys/adguard.gpg is AdGuard's public release-signing key
+(fingerprint 28645AC9776EC4C00BCE2AFC0FE641E7235E2EC6), included only to verify
+downloads. It is not covered by the MIT License above.
+
+AdGuard VPN CLI is proprietary software by AdGuard Software Ltd. It is not part
+of this plugin and is not redistributed with it: the plugin downloads it from
+AdGuard's official GitHub releases on the user's request, and its use is
+governed by AdGuard's own terms. "AdGuard" is a trademark of its owner; this
+plugin is unofficial and not affiliated with or endorsed by AdGuard.

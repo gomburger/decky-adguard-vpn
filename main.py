@@ -215,7 +215,9 @@ class State:
         self.login = {"active": False, "url": "", "code": "", "output": "", "qr": []}
         self.login_proc = None
         self.update = {"latest": "", "available": False, "checked": False}
-        self.update_at = 0.0
+        self.update_at = None  # monotonic time of the last successful check; None = never
+        self.update_tried_at = None
+        self.update_checking = None
         self.ready = False  # True once a background refresh has finished
         self.refreshing = None
         self.refreshed_at = 0.0
@@ -239,6 +241,7 @@ def spawn(coro):
 VERSION_FILE = os.path.join(CLI_DIR, "VERSION")
 VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 UPDATE_CHECK_SEC = 6 * 3600
+UPDATE_RETRY_SEC = 30 * 60  # after a failed check (offline, rate limit)
 
 
 def version_tuple(text):
@@ -269,7 +272,7 @@ def latest_release():
 
 
 async def check_update(force=False):
-    if not force and time.monotonic() - state.update_at < UPDATE_CHECK_SEC:
+    if not force and state.update_at is not None and time.monotonic() - state.update_at < UPDATE_CHECK_SEC:
         return
     release = await asyncio.to_thread(latest_release)
     latest = release.get("tag_name", "")
@@ -290,6 +293,22 @@ async def quiet_update_check():
         await check_update()
     except Exception as e:
         log.info("update check failed: %s", e)
+    finally:
+        state.update_checking = None
+
+
+def request_update_check():
+    """Check for a new CLI in the background when the last check is over
+    UPDATE_CHECK_SEC old. Runs at load and whenever the panel asks for state."""
+    if state.update_checking or state.busy or not state.version:
+        return
+    now = time.monotonic()
+    if state.update_at is not None and now - state.update_at < UPDATE_CHECK_SEC:
+        return
+    if state.update_tried_at is not None and now - state.update_tried_at < UPDATE_RETRY_SEC:
+        return
+    state.update_tried_at = now
+    state.update_checking = spawn(quiet_update_check())
 
 
 async def refresh_status():
@@ -588,7 +607,7 @@ class Plugin:
         if state.version and state.prefs["auto_connect"]:
             spawn(auto_connect_task())
         if state.version:
-            spawn(quiet_update_check())
+            request_update_check()
             # Warm up so the first panel open already has fresh state.
             request_refresh()
         log.info("loaded, cli=%s", state.version or "missing")
@@ -604,6 +623,7 @@ class Plugin:
         # Answer with what we know now; the CLI calls run behind it and the
         # panel's next poll picks up their results.
         request_refresh()
+        request_update_check()
         return snapshot()
 
     async def clear_error(self):
@@ -704,6 +724,16 @@ class Plugin:
             favorites.remove(city)
         else:
             favorites.append(city)
+        save_prefs()
+        return snapshot()
+
+    async def set_favorites(self, cities):
+        """Save a new favorites order. Only reorders: unknown cities are ignored and
+        favorites missing from the list keep their place at the end."""
+        current = state.prefs.setdefault("favorites", [])
+        ordered = [city for city in dict.fromkeys(cities or []) if city in current]
+        ordered += [city for city in current if city not in ordered]
+        state.prefs["favorites"] = ordered
         save_prefs()
         return snapshot()
 

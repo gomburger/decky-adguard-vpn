@@ -23,6 +23,7 @@ const connect = callable("connect");
 const disconnect = callable("disconnect");
 const setAutoConnect = callable("set_auto_connect");
 const toggleFavorite = callable("toggle_favorite");
+const setFavorites = callable("set_favorites");
 const setLocation = callable("set_location");
 const checkUpdate = callable("check_update");
 const updateCli = callable("update_cli");
@@ -98,6 +99,9 @@ const STRINGS = {
         "favorite.add": "★ Add to Favorites",
         "locations.refresh": "Refresh Location List",
         "favorites": "Favorites",
+        "reorder.start": "Reorder",
+        "reorder.save": "Save Order",
+        "reorder.hint": "Move with ↑↓, save with X or A, cancel with B",
         "settings": "Settings",
         "auto.label": "Auto-Connect",
         "auto.description": "Connects to the last location when Steam starts",
@@ -111,6 +115,7 @@ const STRINGS = {
         "signature.ok": "✓ AdGuard official signature verified",
         "signature.none": "No signature check on record (installed by an earlier version)",
         "update.to": "Update to {version}",
+        "update.notice": "AdGuard VPN CLI {latest} is available. You can update it at the bottom of this panel.",
         "update.latest": "the latest version",
         "update.reinstall": "Verify Signature and Reinstall",
         "update.reconnect": " (briefly disconnects)",
@@ -169,6 +174,9 @@ const STRINGS = {
         "favorite.add": "★ 즐겨찾기에 추가",
         "locations.refresh": "위치 목록 새로고침",
         "favorites": "즐겨찾기",
+        "reorder.start": "순서 바꾸기",
+        "reorder.save": "순서 저장",
+        "reorder.hint": "↑↓로 옮기고 X나 A로 저장, B로 취소",
         "settings": "설정",
         "auto.label": "자동 연결",
         "auto.description": "Steam이 시작될 때 마지막 위치로 연결합니다",
@@ -182,6 +190,7 @@ const STRINGS = {
         "signature.ok": "✓ AdGuard 공식 서명 확인됨",
         "signature.none": "서명 확인 기록 없음 (이전 버전으로 설치됨)",
         "update.to": "{version}로 업데이트",
+        "update.notice": "AdGuard VPN CLI 새 버전 {latest}이 나왔습니다. 패널 맨 아래에서 업데이트할 수 있습니다.",
         "update.latest": "최신 버전",
         "update.reinstall": "서명 확인하고 다시 설치",
         "update.reconnect": " (잠시 끊겼다가 다시 연결)",
@@ -226,12 +235,6 @@ function localCountry(loc) {
     catch {
         return "";
     }
-}
-
-function locationLabel(loc) {
-    const ping = loc.ping != null ? ` · ${loc.ping}ms` : "";
-    const country = localCountry(loc) || titleCase(loc.country);
-    return `${flag(loc.iso)} ${titleCase(loc.city)}, ${country}${ping}`;
 }
 
 // Matches city, English or localized country name, or ISO code, ignoring case and spaces.
@@ -329,6 +332,11 @@ function LocationText({ loc, city, mark, markColor }) {
 const SECTION_DIVIDER = { height: "1px", background: "rgba(255, 255, 255, 0.1)", marginTop: "7px" };
 
 const LIST_BUTTON ={ padding: "8px 12px", minWidth: 0, width: "100%" };
+const GRAB_COLOR = "#1a9fff";
+const GRABBED = { boxShadow: `0 0 0 2px ${GRAB_COLOR}` };
+// Steam's EGamepadButton codes for the D-pad.
+const GAMEPAD_UP = 9;
+const GAMEPAD_DOWN = 10;
 
 // The location picker: search box on top, list underneath. Steam's own dropdown
 // menu cannot hold a text field, so this is a modal of its own.
@@ -433,7 +441,9 @@ function panel(sections) {
 }
 
 function Note({ children, color }) {
-    return h("div", { style: { ...NOTE, color: color || NOTE.color, padding: "4px 0", wordBreak: "break-word" } }, children);
+    return h("div", { style: { ...NOTE, color: color || NOTE.color, padding: "4px 0",
+        // Korean wraps between words, not inside them; long links still wrap anywhere.
+        wordBreak: "keep-all", overflowWrap: "anywhere" } }, children);
 }
 
 // Kept between panel opens so the panel can draw immediately instead of
@@ -499,6 +509,26 @@ function App() {
         if (!loggedIn) return;
         listLocations(false).then((list) => list && list.length && setLocations(list)).catch(() => {});
     }, [loggedIn, setLocations]);
+
+    // Reordering favorites: X starts it on the focused row, ↑↓ move that row, X or A
+    // saves and B cancels. `order` holds the unsaved order while it runs.
+    const [order, setOrder] = useState(null);
+    const [grabbed, setGrabbed] = useState(null);
+    const navRefs = useRef({});
+    const refocus = useRef(null);
+    const navRef = (city) => navRefs.current[city] || (navRefs.current[city] = SP_REACT.createRef());
+    useEffect(() => {
+        // Moving a row moves its button in the DOM, which drops gamepad focus; put it back.
+        const city = refocus.current;
+        if (!city) return;
+        refocus.current = null;
+        try {
+            navRefs.current[city]?.current?.TakeFocus(true);
+        }
+        catch (e) {
+            console.error("[AdGuard VPN]", e);
+        }
+    });
 
     if (!s) {
         return h(DFL.PanelSection, null, Row(h(Note, null, t("loading"))));
@@ -582,12 +612,7 @@ function App() {
     const favorites = s.prefs.favorites || [];
     const isFavorite = (city) => favorites.includes(city);
     const findLocation = (city) => locations.find((loc) => loc.city === city);
-    const favoriteLabel = (city) => {
-        const loc = findLocation(city);
-        return loc ? locationLabel(loc) : titleCase(city);
-    };
     const selected = s.prefs.location || FASTEST;
-    const selectedLabel = selected === FASTEST ? t("fastest") : favoriteLabel(selected);
     const connectedCity = connected ? (s.status.location || "").toLowerCase() : "";
 
     // Picking a location only remembers it, unless the VPN is on: then it switches over.
@@ -628,7 +653,10 @@ function App() {
                     onPick: chooseLocation,
                 })),
             },
-                h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 } }, selectedLabel),
+                // Same two lines as the favorites, so long country names stay readable.
+                selected === FASTEST
+                    ? h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 } }, t("fastest"))
+                    : h(LocationText, { loc: findLocation(selected), city: selected }),
                 h("span", { style: { flexShrink: 0, opacity: 0.7 } }, "🔍 ▾")))),
         selected !== FASTEST && !isFavorite(selected)
             ? Row(h(DFL.ButtonItem, {
@@ -643,29 +671,75 @@ function App() {
         }, t("locations.refresh"))),
     ));
 
+    const reordering = order !== null;
+    const startReorder = (city) => {
+        refocus.current = city;
+        setOrder([...favorites]);
+        setGrabbed(city);
+    };
+    const stopReorder = () => {
+        refocus.current = grabbed;
+        setOrder(null);
+        setGrabbed(null);
+    };
+    const saveOrder = () => {
+        const next = order;
+        stopReorder();
+        // Show the new order right away instead of flashing the old one until the save returns.
+        apply({ ...s, prefs: { ...s.prefs, favorites: next } });
+        run(() => setFavorites(next));
+    };
+    const moveGrabbed = (step) => {
+        const i = order.indexOf(grabbed);
+        const j = i + step;
+        if (i < 0 || j < 0 || j >= order.length) return;
+        const next = [...order];
+        [next[i], next[j]] = [next[j], next[i]];
+        refocus.current = grabbed;
+        setOrder(next);
+    };
+
     if (favorites.length) {
+        const shown = reordering ? order.filter((city) => favorites.includes(city)) : favorites;
         sections.push(h(
             DFL.PanelSection,
             { key: "favorites", title: t("favorites") },
-            ...favorites.map((city) => {
+            reordering ? Row(h(Note, null, t("reorder.hint"))) : null,
+            ...shown.map((city) => {
                 const here = connectedCity && connectedCity === city.toLowerCase();
-                const mark = here ? "●" : (!connected && city === selected ? "✓" : "");
+                const isGrabbed = reordering && city === grabbed;
+                const mark = isGrabbed ? "↕" : here ? "●" : (!connected && city === selected ? "✓" : "");
                 return Row(h(
                     DFL.Focusable,
                     {
                         key: city,
                         "flow-children": "horizontal",
                         style: { display: "flex", gap: "6px", padding: "2px 0", alignItems: "stretch" },
+                        onSecondaryButton: () => (reordering ? saveOrder() : startReorder(city)),
+                        onSecondaryActionDescription: reordering ? t("reorder.save") : t("reorder.start"),
+                        onCancelButton: reordering ? stopReorder : undefined,
+                        onCancelActionDescription: reordering ? t("cancel") : undefined,
+                        // While reordering the cursor stays on the grabbed row; ↑↓ move the row instead.
+                        onGamepadDirection: reordering
+                            ? (e) => {
+                                const button = e?.detail?.button;
+                                if (button === GAMEPAD_UP) moveGrabbed(-1);
+                                else if (button === GAMEPAD_DOWN) moveGrabbed(1);
+                                return true;
+                            }
+                            : undefined,
                     },
                     h(DFL.DialogButton, {
-                        style: { ...LIST_BUTTON, flex: 1, width: "auto" },
-                        disabled: busy || here,
-                        onClick: () => chooseLocation(city),
-                    }, h(LocationText, { loc: findLocation(city), city, mark })),
+                        navRef: navRef(city),
+                        style: { ...LIST_BUTTON, flex: 1, width: "auto", ...(isGrabbed ? GRABBED : null) },
+                        disabled: reordering ? false : busy || here,
+                        onOKActionDescription: reordering ? t("reorder.save") : undefined,
+                        onClick: () => (reordering ? saveOrder() : chooseLocation(city)),
+                    }, h(LocationText, { loc: findLocation(city), city, mark, markColor: isGrabbed ? GRAB_COLOR : undefined })),
                     h(DFL.DialogButton, {
-                        style: { width: "44px", minWidth: "44px", padding: 0 },
+                        style: { width: "44px", minWidth: "44px", padding: 0, opacity: reordering ? 0.35 : undefined },
                         disabled: busy,
-                        onClick: () => run(() => toggleFavorite(city)),
+                        onClick: () => (reordering ? saveOrder() : run(() => toggleFavorite(city))),
                     }, "✕"),
                 ));
             }),
@@ -695,6 +769,14 @@ function App() {
     ));
 
     const upd = s.update || {};
+    // The update button lives at the bottom; say so at the top where it is seen.
+    if (upd.available && s.busy !== "updating") {
+        sections.unshift(h(
+            DFL.PanelSection,
+            { key: "update-notice" },
+            Row(h(Note, { color: ON_COLOR }, t("update.notice", { latest: upd.latest || t("update.latest") }))),
+        ));
+    }
     const updateNote = !upd.checked
         ? t("version.installed", { version: s.version || t("version.unknown") })
         : upd.available

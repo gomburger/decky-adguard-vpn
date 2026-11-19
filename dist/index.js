@@ -74,6 +74,8 @@ const STRINGS = {
         "picker.title": "Choose Location",
         "picker.hint": "City, country, or country code",
         "picker.empty": "No results.",
+        "picker.fav_add": "Add to Favorites",
+        "picker.fav_remove": "Remove from Favorites",
         "fastest": "⚡ Fastest Location",
         "uninstall.title": "Remove AdGuard VPN CLI?",
         "uninstall.body": "This disconnects the VPN, logs out, and deletes the CLI, your login, and the CLI settings. Favorites and the auto-connect setting are kept. To use it again, install the CLI and log in.",
@@ -113,7 +115,7 @@ const STRINGS = {
         "version.new": "New version {latest} available (current: {version})",
         "version.latest": "Up to date ({version})",
         "signature.ok": "✓ AdGuard official signature verified",
-        "signature.none": "No signature check on record (installed by an earlier version)",
+        "signature.none": "AdGuard official signature not verified",
         "update.to": "Update to {version}",
         "update.notice": "AdGuard VPN CLI {latest} is available. You can update it at the bottom of this panel.",
         "update.latest": "the latest version",
@@ -149,6 +151,8 @@ const STRINGS = {
         "picker.title": "위치 선택",
         "picker.hint": "도시, 나라 이름(한글/영문) 또는 국가 코드",
         "picker.empty": "검색 결과가 없습니다.",
+        "picker.fav_add": "즐겨찾기 추가",
+        "picker.fav_remove": "즐겨찾기 해제",
         "fastest": "⚡ 가장 빠른 위치",
         "uninstall.title": "AdGuard VPN CLI를 제거할까요?",
         "uninstall.body": "VPN 연결을 끊고 로그아웃한 뒤 CLI와 로그인 정보, CLI 설정을 지웁니다. 즐겨찾기와 자동 연결 설정은 남습니다. 다시 쓰려면 CLI를 설치하고 로그인해야 합니다.",
@@ -188,7 +192,7 @@ const STRINGS = {
         "version.new": "새 버전 {latest} 있음 (현재 {version})",
         "version.latest": "최신 버전입니다 ({version})",
         "signature.ok": "✓ AdGuard 공식 서명 확인됨",
-        "signature.none": "서명 확인 기록 없음 (이전 버전으로 설치됨)",
+        "signature.none": "AdGuard 공식 서명 확인 안 됨",
         "update.to": "{version}로 업데이트",
         "update.notice": "AdGuard VPN CLI 새 버전 {latest}이 나왔습니다. 패널 맨 아래에서 업데이트할 수 있습니다.",
         "update.latest": "최신 버전",
@@ -338,10 +342,27 @@ const GRABBED = { boxShadow: `0 0 0 2px ${GRAB_COLOR}` };
 const GAMEPAD_UP = 9;
 const GAMEPAD_DOWN = 10;
 
+// Same chevron as the screen recorder plugin's fold button.
+function Chevron({ up }) {
+    return h("svg", { viewBox: "0 0 24 24", width: 18, height: 18, style: { display: "block" } },
+        h("path", { d: up ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6", fill: "none", stroke: "currentColor",
+            strokeWidth: 2.5, strokeLinecap: "round", strokeLinejoin: "round" }));
+}
+
+const PICKER_LIST = "adguard-vpn-picker-list";
+const PICKER_WIDTH = "480px";
+
 // The location picker: search box on top, list underneath. Steam's own dropdown
 // menu cannot hold a text field, so this is a modal of its own.
-function LocationPicker({ closeModal, locations, favorites, selected, connected, onPick }) {
+function LocationPicker({ closeModal, locations, favorites, selected, onPick, onToggleFavorite }) {
     const [query, setQuery] = useState("");
+    // X adds or removes a favorite right here. Only the ★ changes; the list keeps the
+    // order it opened with so the cursor stays put.
+    const [favs, setFavs] = useState(favorites);
+    const toggleFav = (city) => {
+        setFavs((list) => (list.includes(city) ? list.filter((c) => c !== city) : [...list, city]));
+        onToggleFavorite(city);
+    };
     const searching = query.trim() !== "";
     const byCity = (city) => locations.find((loc) => loc.city === city);
     const matches = (city) => {
@@ -350,7 +371,7 @@ function LocationPicker({ closeModal, locations, favorites, selected, connected,
     };
     const items = [];
     if (!searching) items.push({ city: FASTEST });
-    favorites.filter(matches).forEach((city) => items.push({ city, loc: byCity(city), favorite: true }));
+    favorites.filter(matches).forEach((city) => items.push({ city, loc: byCity(city) }));
     locations
         .filter((loc) => !favorites.includes(loc.city) && matchesQuery(loc, query))
         .forEach((loc) => items.push({ city: loc.city, loc }));
@@ -363,6 +384,15 @@ function LocationPicker({ closeModal, locations, favorites, selected, connected,
     return h(
         DFL.ModalRoot,
         { closeModal, onCancel: closeModal },
+        // Steam's dialog is 660px wide; the two-line rows read fine in less. Its spacing
+        // above and below is trimmed too (24px around it, 11px outside and 24px inside it)
+        // so the list gets that height.
+        h("style", null, `
+            *:has(> .DialogContent .${PICKER_LIST}) { padding-top: 8px !important; padding-bottom: 8px !important; }
+            .DialogContent:has(.${PICKER_LIST}) {
+                width: ${PICKER_WIDTH} !important; min-width: 0 !important; max-width: ${PICKER_WIDTH} !important;
+                margin-top: 0 !important; margin-bottom: 0 !important; padding-top: 20px !important; padding-bottom: 20px !important;
+            }`),
         h("div", { style: { fontSize: "20px", fontWeight: "bold", marginBottom: "8px" } }, t("picker.title")),
         // The hint sits over the empty box like a placeholder and lets clicks through.
         h(
@@ -393,7 +423,10 @@ function LocationPicker({ closeModal, locations, favorites, selected, connected,
             DFL.Focusable,
             {
                 "flow-children": "vertical",
-                style: { display: "flex", flexDirection: "column", gap: "4px", marginTop: "8px", maxHeight: "55vh", overflowY: "auto" },
+                className: PICKER_LIST,
+                // Short enough that the whole dialog fits on screen. Otherwise Steam also
+                // scrolls the dialog itself while the cursor moves down the list.
+                style: { display: "flex", flexDirection: "column", gap: "4px", marginTop: "8px", maxHeight: "calc(100vh - 230px)", overflowY: "auto" },
             },
             items.length
                 ? items.map((item, index) => h(DFL.DialogButton, {
@@ -402,12 +435,15 @@ function LocationPicker({ closeModal, locations, favorites, selected, connected,
                     // Open with "fastest" focused instead of the search box.
                     autoFocus: index === 0 && item.city === FASTEST,
                     onClick: () => pick(item.city),
+                    onSecondaryButton: item.city === FASTEST ? undefined : () => toggleFav(item.city),
+                    onSecondaryActionDescription: item.city === FASTEST ? undefined
+                        : t(favs.includes(item.city) ? "picker.fav_remove" : "picker.fav_add"),
                 }, item.city === FASTEST
                     ? h(LocationText, { city: t("fastest"), mark: item.city === selected ? "✓" : "" })
                     : h(LocationText, {
                         loc: item.loc,
                         city: item.city,
-                        mark: [item.city === selected ? "✓" : "", item.favorite ? "★" : ""].filter(Boolean).join(" "),
+                        mark: [item.city === selected ? "✓" : "", favs.includes(item.city) ? "★" : ""].filter(Boolean).join(" "),
                         markColor: item.city === selected ? ON_COLOR : "#f5c542",
                     })))
                 : h(Note, null, t("picker.empty")),
@@ -435,6 +471,64 @@ function Row(...children) {
 // keyed on structure rather than Steam's hashed class names.
 const PANEL_CLASS = "adguard-vpn-panel";
 const PANEL_CSS = `.${PANEL_CLASS} > div:not(style) { margin-bottom: 9px !important; }`;
+
+function findScroller(element) {
+    const view = element?.ownerDocument?.defaultView;
+    if (!view) return null;
+    for (let el = element.parentElement; el; el = el.parentElement) {
+        if (/(auto|scroll)/.test(view.getComputedStyle(el).overflowY)) return el;
+    }
+    return null;
+}
+
+// Rows that bring the panel back to its top when they get focus. Steam would
+// scroll only as far as the row, and when focus comes from far below it jumps
+// there at once, cancelling a smooth scroll started from onFocus. With "force"
+// Steam leaves the scrolling to fnScrollIntoViewHandler, so one smooth scroll
+// to the top is all that runs (same as Screen Recorder 0.10.1).
+function TopGroup(...children) {
+    let element = null;
+    return h("div", { ref: (node) => { element = node; } }, h(DFL.Focusable, {
+        "flow-children": "column",
+        scrollIntoViewWhenChildFocused: "force",
+        fnScrollIntoViewHandler: () => {
+            findScroller(element)?.scrollTo({ top: 0, behavior: "smooth" });
+            return true;
+        },
+    }, ...children));
+}
+
+// The first solid background behind the panel, for the pinned status line.
+function panelBackground(element) {
+    const view = element?.ownerDocument?.defaultView;
+    for (let el = element; el && view; el = el.parentElement) {
+        const color = view.getComputedStyle(el).backgroundColor;
+        if (color && color !== "transparent" && !/rgba\(.*,\s*0\)$/.test(color)) return color;
+    }
+    return "#0e141b";
+}
+
+// Height of the sticky title Steam keeps at the top of the Quick Access page,
+// found as the sticky element (outside the panel) under the scroller's top edge.
+function stickyHeaderHeight(scroller, panelEl) {
+    const doc = scroller.ownerDocument;
+    const view = doc.defaultView;
+    const box = scroller.getBoundingClientRect();
+    for (const el of doc.elementsFromPoint(box.left + box.width / 2, box.top + 2)) {
+        if (panelEl.contains(el) || !scroller.contains(el)) continue;
+        if (view.getComputedStyle(el).position === "sticky") return Math.max(0, Math.round(el.getBoundingClientRect().bottom - box.top));
+    }
+    return 0;
+}
+
+function StatusLine({ connected, text }) {
+    return h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: "8px", fontSize: "15px", padding: "4px 0", color: connected ? ON_COLOR : OFF_COLOR } },
+        h(ShieldIcon, { on: connected }),
+        h("span", null, text),
+    );
+}
 
 function panel(sections) {
     return h("div", { className: PANEL_CLASS }, h("style", null, PANEL_CSS), ...sections);
@@ -465,6 +559,7 @@ function App() {
     const apply = useCallback((next) => {
         if (!next) return;
         lastState = next;
+        notifyListIcon(next);
         if (alive.current) setS(next);
     }, []);
 
@@ -529,6 +624,42 @@ function App() {
             console.error("[AdGuard VPN]", e);
         }
     });
+
+    // While connected, the status line stays at the top once its row scrolls away.
+    // A sticky row would only stick inside its own row, so a zero-height sticky
+    // holder at the start of the panel shows a copy instead.
+    const statusRef = useRef(null);
+    const [pin, setPin] = useState(null); // { background, top, left, right } while shown, else null
+    const pinWanted = !!(s && s.status && s.status.connected);
+    useEffect(() => {
+        const row = statusRef.current;
+        const scroller = pinWanted && row ? findScroller(row) : null;
+        if (!scroller) {
+            setPin(null);
+            return undefined;
+        }
+        const background = panelBackground(scroller);
+        const panelEl = row.closest(`.${PANEL_CLASS}`) || scroller;
+        const update = () => {
+            const rowBox = row.getBoundingClientRect();
+            const scrollerBox = scroller.getBoundingClientRect();
+            // Sit under the page's own sticky title ("← AdGuard VPN"), whose shadow
+            // would otherwise fade the rows just below the copy.
+            const top = stickyHeaderHeight(scroller, panelEl);
+            if (rowBox.bottom > scrollerBox.top + top + 1) {
+                setPin(null);
+                return;
+            }
+            // Indent the copy like the rows so the icon and the line sit where theirs do.
+            const panelBox = panelEl.getBoundingClientRect();
+            const left = Math.round(rowBox.left - panelBox.left);
+            const right = Math.round(panelBox.right - rowBox.right);
+            setPin((old) => (old && old.top === top && old.left === left && old.right === right ? old : { background, top, left, right }));
+        };
+        update();
+        scroller.addEventListener("scroll", update, { passive: true });
+        return () => scroller.removeEventListener("scroll", update);
+    }, [pinWanted]);
 
     if (!s) {
         return h(DFL.PanelSection, null, Row(h(Note, null, t("loading"))));
@@ -621,21 +752,26 @@ function App() {
         run(() => (connected ? connect(city) : setLocation(city)));
     };
 
+    // A span, not a div: the panel's spacing rule applies to its divs.
+    sections.unshift(h("span", { key: "pin", style: { display: "block", position: "sticky", top: pin ? pin.top : 0, height: 0, zIndex: 20 } },
+        connected && pin ? h("div", {
+            // The background spans the panel to hide what scrolls under it; the line
+            // below matches Steam's row separators, with a little room under it.
+            style: { position: "absolute", top: 0, left: 0, right: 0, background: pin.background, padding: `6px ${pin.right}px 6px ${pin.left}px` },
+        }, h("div", { style: { paddingBottom: "4px", borderBottom: "1px solid rgba(255, 255, 255, 0.1)" } },
+            h(StatusLine, { connected, text: statusText }))) : null));
+
     sections.push(h(
         DFL.PanelSection,
         { key: "vpn", title: "VPN" },
-        Row(h(
-            "div",
-            { style: { display: "flex", alignItems: "center", gap: "8px", fontSize: "15px", padding: "4px 0", color: connected ? ON_COLOR : OFF_COLOR } },
-            h(ShieldIcon, { on: connected }),
-            h("span", null, statusText),
-        )),
-        Row(h(DFL.ToggleField, {
+        Row(h("div", { ref: statusRef }, h(StatusLine, { connected, text: statusText }))),
+        // Focusing the switch brings the panel back to its top, status line included.
+        Row(TopGroup(h(DFL.ToggleField, {
             label: t("vpn.toggle"),
             checked: connected,
             disabled: busy,
             onChange: (on) => run(() => (on ? connect(null) : disconnect())),
-        })),
+        }))),
         // The label sits above so the button can use the panel's full width.
         Row(h(DFL.Field, {
             label: t("location"),
@@ -649,15 +785,16 @@ function App() {
                     locations,
                     favorites,
                     selected,
-                    connected,
                     onPick: chooseLocation,
+                    onToggleFavorite: (city) => run(() => toggleFavorite(city)),
                 })),
             },
                 // Same two lines as the favorites, so long country names stay readable.
                 selected === FASTEST
                     ? h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 } }, t("fastest"))
                     : h(LocationText, { loc: findLocation(selected), city: selected }),
-                h("span", { style: { flexShrink: 0, opacity: 0.7 } }, "🔍 ▾")))),
+                h("span", { style: { flexShrink: 0, opacity: 0.7, display: "flex", alignItems: "center", gap: "4px" } },
+                    "🔍", h(Chevron, null))))),
         selected !== FASTEST && !isFavorite(selected)
             ? Row(h(DFL.ButtonItem, {
                 layout: "below",
@@ -808,11 +945,48 @@ function App() {
     return panel(sections);
 }
 
+// The icon in Decky's plugin list turns green while the VPN is connected. Each
+// time the list appears it asks for the state (catching auto-connect at startup
+// or a drop while the panel was closed), and the panel tells it right away when
+// the state changes. get_state answers with what the backend last knew and then
+// checks again in the background, so the icon asks once more after that check.
+const LIST_ICON_RECHECK_MS = 2500;
+const listIconListeners = new Set();
+
+function isConnected(state) {
+    return !!(state && state.installed && state.status && state.status.connected);
+}
+
+function notifyListIcon(state) {
+    const connected = isConnected(state);
+    listIconListeners.forEach((listener) => listener(connected));
+}
+
+function PluginListIcon() {
+    const [connected, setConnected] = useState(isConnected(lastState));
+    useEffect(() => {
+        listIconListeners.add(setConnected);
+        const check = () => getState()
+            .then((next) => {
+                if (!next) return;
+                lastState = next;
+                notifyListIcon(next);
+            })
+            .catch((e) => console.error("[AdGuard VPN]", e));
+        check();
+        const recheck = setTimeout(check, LIST_ICON_RECHECK_MS);
+        return () => {
+            clearTimeout(recheck);
+            listIconListeners.delete(setConnected);
+        };
+    }, []);
+    return h("span", { style: { display: "flex", color: connected ? ON_COLOR : undefined } }, h(ShieldIcon, { on: true }));
+}
+
 var index = DFL.definePlugin(() => ({
     name: manifest.name,
-    titleView: h("div", { className: DFL.staticClasses.Title }, "AdGuard VPN"),
     content: h(App, null),
-    icon: h(ShieldIcon, { on: true }),
+    icon: h(PluginListIcon, null),
     onDismount() {},
 }));
 

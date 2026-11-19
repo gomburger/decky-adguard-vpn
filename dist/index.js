@@ -110,6 +110,8 @@ const STRINGS = {
         "account": "Account",
         "account.logged_in": "Logged in",
         "logout": "Log Out",
+        "logout.title": "Log out of AdGuard VPN?",
+        "logout.body": "This disconnects the VPN and logs out of your AdGuard account. To use it again, log in.",
         "version.unknown": "unknown",
         "version.installed": "Installed version {version}",
         "version.new": "New version {latest} available (current: {version})",
@@ -155,7 +157,7 @@ const STRINGS = {
         "picker.fav_remove": "즐겨찾기 해제",
         "fastest": "⚡ 가장 빠른 위치",
         "uninstall.title": "AdGuard VPN CLI를 제거할까요?",
-        "uninstall.body": "VPN 연결을 끊고 로그아웃한 뒤 CLI와 로그인 정보, CLI 설정을 지웁니다. 즐겨찾기와 자동 연결 설정은 남습니다. 다시 쓰려면 CLI를 설치하고 로그인해야 합니다.",
+        "uninstall.body": "VPN 연결을 끊고 로그아웃한 뒤 CLI와 로그인 정보, CLI 설정을 지웁니다. 즐겨찾기와 자동 연결 설정은 남습니다. 다시 사용하려면 CLI를 설치하고 로그인해야 합니다.",
         "uninstall.ok": "제거",
         "uninstall.button": "AdGuard VPN CLI 제거",
         "cancel": "취소",
@@ -187,6 +189,8 @@ const STRINGS = {
         "account": "계정",
         "account.logged_in": "로그인됨",
         "logout": "로그아웃",
+        "logout.title": "AdGuard VPN에서 로그아웃할까요?",
+        "logout.body": "VPN 연결을 끊고 AdGuard 계정에서 로그아웃합니다. 다시 사용하려면 로그인해야 합니다.",
         "version.unknown": "알 수 없음",
         "version.installed": "설치된 버전 {version}",
         "version.new": "새 버전 {latest} 있음 (현재 {version})",
@@ -356,10 +360,19 @@ const PICKER_WIDTH = "480px";
 // menu cannot hold a text field, so this is a modal of its own.
 function LocationPicker({ closeModal, locations, favorites, selected, onPick, onToggleFavorite }) {
     const [query, setQuery] = useState("");
+    useEffect(markModalShown, []);
+    // A second check inside the picker, from when it is drawn: an early press that
+    // gets past the page-level guard still picks nothing.
+    const drawnAt = useRef(0);
+    SP_REACT.useLayoutEffect(() => {
+        drawnAt.current = Date.now();
+    }, []);
+    const tooSoon = () => Date.now() - drawnAt.current < MODAL_ECHO_MS;
     // X adds or removes a favorite right here. Only the ★ changes; the list keeps the
     // order it opened with so the cursor stays put.
     const [favs, setFavs] = useState(favorites);
     const toggleFav = (city) => {
+        if (tooSoon()) return;
         setFavs((list) => (list.includes(city) ? list.filter((c) => c !== city) : [...list, city]));
         onToggleFavorite(city);
     };
@@ -377,6 +390,7 @@ function LocationPicker({ closeModal, locations, favorites, selected, onPick, on
         .forEach((loc) => items.push({ city: loc.city, loc }));
 
     const pick = (city) => {
+        if (tooSoon()) return;
         closeModal();
         onPick(city);
     };
@@ -451,15 +465,28 @@ function LocationPicker({ closeModal, locations, favorites, selected, onPick, on
     );
 }
 
+function confirmLogout(onOK) {
+    if (openerEcho()) return;
+    showPanelModal(h(GuardedConfirmModal, {
+        strTitle: t("logout.title"),
+        strDescription: t("logout.body"),
+        strOKButtonText: t("logout"),
+        strCancelButtonText: t("cancel"),
+        onOK,
+        onCancel: () => {},
+    }), "logout");
+}
+
 function confirmUninstall(onOK) {
-    DFL.showModal(h(DFL.ConfirmModal, {
+    if (openerEcho()) return;
+    showPanelModal(h(GuardedConfirmModal, {
         strTitle: t("uninstall.title"),
         strDescription: t("uninstall.body"),
         strOKButtonText: t("uninstall.ok"),
         strCancelButtonText: t("cancel"),
         onOK,
         onCancel: () => {},
-    }));
+    }), "uninstall");
 }
 
 function Row(...children) {
@@ -498,6 +525,158 @@ function TopGroup(...children) {
     }, ...children));
 }
 
+// Decky's plugin list and this page share the Quick Access tab's scroller, so the
+// page opened as far down as the list had been scrolled to reach it. Back to the
+// top as it opens, unless Steam has already focused a row that would then be off
+// screen. A modal over the menu makes Decky rebuild the panel when it closes; then
+// the panel goes back to where it was scrolled instead (same as Hangul IME 1.2.5
+// and Screen Recorder 0.10.2).
+let panelTop = null;
+const MODAL_RETURN_MS = 60000;
+const modalReturn = { at: 0, scrollTop: null, opener: null };
+
+// The button that opened a modal, found again in the rebuilt panel by this mark.
+// A display: contents div adds neither a box nor a navigation node.
+const OPENER_ATTR = "data-adguard-vpn-opener";
+
+function Opener(id, child) {
+    return h("div", { [OPENER_ATTR]: id, style: { display: "contents" } }, child);
+}
+
+function showPanelModal(element, opener) {
+    const scroller = findScroller(panelTop);
+    modalReturn.at = Date.now();
+    modalReturn.scrollTop = scroller ? scroller.scrollTop : null;
+    modalReturn.opener = opener || null;
+    guardModalOpenEcho();
+    DFL.showModal(element);
+}
+
+// The A that opens a modal can reach it once more as it appears and press what it
+// focused first ("Fastest Location", or Remove in the confirm dialog). A within
+// 150 ms of the modal appearing is dropped, caught first in the page the modal is
+// drawn in. B is left alone here; the B that closes a modal is handled on the
+// panel's side. Touch and the other buttons are left alone too.
+let modalShownAt = 0;
+const MODAL_ECHO_MS = 150;
+const MODAL_GUARD_MS = 1500;
+
+function markModalShown() {
+    modalShownAt = Date.now();
+}
+
+function guardModalOpenEcho() {
+    let page;
+    try {
+        page = DFL.findSP?.()?.document;
+    }
+    catch {
+        page = null;
+    }
+    if (!page) return;
+    modalShownAt = Date.now();
+    const dropEcho = (event) => {
+        if (Date.now() - modalShownAt >= MODAL_ECHO_MS) return;
+        event.stopPropagation();
+        event.preventDefault();
+    };
+    page.addEventListener("vgp_onok", dropEcho, true);
+    // Long enough for the modal to appear; the check above does the timing.
+    setTimeout(() => page.removeEventListener("vgp_onok", dropEcho, true), MODAL_GUARD_MS);
+}
+
+// ConfirmModal is Steam's own; this notes when it appears and passes everything on.
+function GuardedConfirmModal(props) {
+    useEffect(markModalShown, []);
+    return h(DFL.ConfirmModal, props);
+}
+
+// The A that closes a modal reaches the menu once more as it shows again and would
+// open the modal again (or press whatever Steam focused). No hand presses that soon.
+let modalReturnedAt = 0;
+const OPENER_ECHO_MS = 150;
+
+function openerEcho() {
+    return Date.now() - modalReturnedAt < OPENER_ECHO_MS;
+}
+
+// Steam puts focus somewhere 1 to 4 ms after the page shows; if that is not the
+// opener, it comes back to it at 20 ms (same as Hangul IME 1.2.5). TakeFocus on
+// the node that already has focus changes nothing.
+const FOCUS_SETTLE_MS = 20;
+
+// Give focus the way the controller would, through the navigation node Steam keeps
+// for the element: a browser focus moves the highlight, but not where up/down start.
+function takeSteamFocus(element) {
+    const target = element?.querySelector?.("button, [tabindex]") ?? element;
+    if (!target) return;
+    const fiberKey = Object.keys(target).find((key) => key.startsWith("__reactFiber$"));
+    for (let fiber = fiberKey ? target[fiberKey] : null, level = 0; fiber && level < 30; fiber = fiber.return, level++) {
+        for (let hook = fiber.memoizedState; hook && typeof hook === "object"; hook = hook.next) {
+            const node = hook.memoizedState?.current;
+            if (node && typeof node.TakeFocus === "function") {
+                node.TakeFocus();
+                return;
+            }
+        }
+    }
+    target.focus?.();
+}
+
+// Steam scrolls to a row only when focus moves to it; if focus was already back on
+// it, the row could stay out of sight.
+function showInPanel(element) {
+    const target = element?.querySelector?.("button, [tabindex]") ?? element;
+    const scroller = findScroller(target);
+    if (!target || !scroller) return;
+    const box = target.getBoundingClientRect();
+    const view = scroller.getBoundingClientRect();
+    if (box.top >= view.top && box.bottom <= view.bottom) return;
+    target.scrollIntoView({ block: "center", behavior: "auto" });
+}
+
+function focusOnceShown(findOpener) {
+    const page = panelTop?.ownerDocument;
+    if (!page) return undefined;
+    let timer = null;
+    const focusSoon = () => {
+        modalReturnedAt = Date.now();
+        panelShownAt = Date.now();
+        timer = setTimeout(() => {
+            const opener = findOpener();
+            if (!opener) return;
+            takeSteamFocus(opener);
+            showInPanel(opener);
+        }, FOCUS_SETTLE_MS);
+    };
+    const onShown = () => {
+        if (page.visibilityState !== "visible") return;
+        page.removeEventListener("visibilitychange", onShown);
+        focusSoon();
+    };
+    if (page.visibilityState === "visible") focusSoon();
+    else page.addEventListener("visibilitychange", onShown);
+    return () => {
+        page.removeEventListener("visibilitychange", onShown);
+        clearTimeout(timer);
+    };
+}
+
+function resetPanelScroll() {
+    const timer = setTimeout(() => {
+        const scroller = findScroller(panelTop);
+        if (!scroller) return;
+        const focused = panelTop.querySelector(".gpfocus");
+        if (focused) {
+            const scrollerTop = scroller.getBoundingClientRect().top;
+            const bottomAtTop = focused.getBoundingClientRect().bottom - scrollerTop + scroller.scrollTop;
+            if (bottomAtTop > scroller.clientHeight) return;
+        }
+        scroller.scrollTop = 0;
+    }, 0);
+    return () => clearTimeout(timer);
+}
+
 // The first solid background behind the panel, for the pinned status line.
 function panelBackground(element) {
     const view = element?.ownerDocument?.defaultView;
@@ -530,8 +709,33 @@ function StatusLine({ connected, text }) {
     );
 }
 
+// B closing a modal reaches the panel once more as it shows again, and Decky took
+// it as Back to the plugin list. B within 150 ms of the panel being built or shown
+// is dropped (same timing as Hangul IME 1.2.5 and Screen Recorder 0.10.2). It is
+// caught as Steam's vgp_oncancel DOM event on the panel's div rather than with a
+// Focusable around the panel: an extra nav node makes Steam put focus back on the
+// VPN switch instead of the location button after the picker closes.
+let panelShownAt = 0;
+const BACK_ECHO_MS = 150;
+const echoGuarded = new WeakSet();
+
+function dropEchoedBack(event) {
+    if (Date.now() - panelShownAt >= BACK_ECHO_MS) return;
+    // What a Focusable's onCancelButton does when it handles the button.
+    event.stopPropagation();
+    event.preventDefault();
+}
+
+function panelRef(element) {
+    panelTop = element;
+    if (element && !echoGuarded.has(element)) {
+        echoGuarded.add(element);
+        element.addEventListener("vgp_oncancel", dropEchoedBack);
+    }
+}
+
 function panel(sections) {
-    return h("div", { className: PANEL_CLASS }, h("style", null, PANEL_CSS), ...sections);
+    return h("div", { className: PANEL_CLASS, ref: panelRef }, h("style", null, PANEL_CSS), ...sections);
 }
 
 function Note({ children, color }) {
@@ -625,6 +829,34 @@ function App() {
         }
     });
 
+    // Opened anew: to the top. Rebuilt after a modal: back to where it was, before
+    // it is drawn.
+    const [backFromModal] = useState(() => modalReturn.at > 0 && Date.now() - modalReturn.at < MODAL_RETURN_MS);
+    SP_REACT.useLayoutEffect(() => {
+        const scroller = findScroller(panelTop);
+        if (backFromModal && scroller && modalReturn.scrollTop !== null) scroller.scrollTop = modalReturn.scrollTop;
+    }, []);
+    useEffect(() => {
+        if (!backFromModal) return resetPanelScroll();
+        const opener = modalReturn.opener;
+        modalReturn.at = 0;
+        modalReturn.scrollTop = null;
+        modalReturn.opener = null;
+        return focusOnceShown(() => (opener ? panelTop?.querySelector(`[${OPENER_ATTR}="${opener}"]`) : null));
+    }, []);
+
+    // Note when the panel is built or the menu shows again, for the echoed B.
+    useEffect(() => {
+        panelShownAt = Date.now();
+        const page = panelTop?.ownerDocument;
+        if (!page) return undefined;
+        const onVisibility = () => {
+            if (page.visibilityState === "visible") panelShownAt = Date.now();
+        };
+        page.addEventListener("visibilitychange", onVisibility);
+        return () => page.removeEventListener("visibilitychange", onVisibility);
+    }, []);
+
     // While connected, the status line stays at the top once its row scrolls away.
     // A sticky row would only stick inside its own row, so a zero-height sticky
     // holder at the start of the panel shows a copy instead.
@@ -682,7 +914,7 @@ function App() {
             DFL.PanelSection,
             { key: "install", title: t("install.title") },
             Row(h(Note, null, t("install.body"))),
-            Row(h(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: () => run(installCli) },
+            Row(h(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: () => { if (!openerEcho()) run(installCli); } },
                 s.busy ? t(`busy.${s.busy}`) : t("install.button"))),
         ));
         return panel(sections);
@@ -699,7 +931,7 @@ function App() {
         const rows = [];
         if (!login.active) {
             rows.push(Row(h(Note, null, t("login.required"))));
-            rows.push(Row(h(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: () => run(startLogin) }, t("login.button"))));
+            rows.push(Row(h(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: () => { if (!openerEcho()) run(startLogin); } }, t("login.button"))));
         }
         else if (!login.url) {
             rows.push(Row(h(Note, null, t("login.waiting"))));
@@ -714,8 +946,8 @@ function App() {
                     style: { fontSize: "22px", fontWeight: "bold", letterSpacing: "2px", textAlign: "center", padding: "6px 0" },
                 }, login.code)));
             }
-            rows.push(Row(h(Note, null, login.url)));
             rows.push(Row(h(DFL.ButtonItem, { layout: "below", onClick: () => openUrl(login.url) }, t("login.open"))));
+            rows.push(Row(h(Note, null, login.url)));
             rows.push(Row(h(DFL.ButtonItem, { layout: "below", onClick: () => run(cancelLogin) }, t("cancel"))));
         }
         sections.push(h(DFL.PanelSection, { key: "login", title: t("login.title") }, ...rows));
@@ -723,11 +955,11 @@ function App() {
             sections.push(h(
                 DFL.PanelSection,
                 { key: "uninstall", title: "AdGuard VPN CLI" },
-                Row(h(DFL.ButtonItem, {
+                Row(Opener("uninstall", h(DFL.ButtonItem, {
                     layout: "below",
                     disabled: busy,
                     onClick: () => confirmUninstall(() => run(uninstallCli)),
-                }, t("uninstall.button"))),
+                }, t("uninstall.button")))),
             ));
         }
         return panel(sections);
@@ -778,23 +1010,26 @@ function App() {
             childrenLayout: "below",
             childrenContainerWidth: "max",
         },
-            h(DFL.DialogButton, {
+            Opener("location", h(DFL.DialogButton, {
                 style: { ...LIST_BUTTON, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" },
                 disabled: busy,
-                onClick: () => DFL.showModal(h(LocationPicker, {
-                    locations,
-                    favorites,
-                    selected,
-                    onPick: chooseLocation,
-                    onToggleFavorite: (city) => run(() => toggleFavorite(city)),
-                })),
+                onClick: () => {
+                    if (openerEcho()) return;
+                    showPanelModal(h(LocationPicker, {
+                        locations,
+                        favorites,
+                        selected,
+                        onPick: chooseLocation,
+                        onToggleFavorite: (city) => run(() => toggleFavorite(city)),
+                    }), "location");
+                },
             },
                 // Same two lines as the favorites, so long country names stay readable.
                 selected === FASTEST
                     ? h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 } }, t("fastest"))
                     : h(LocationText, { loc: findLocation(selected), city: selected }),
                 h("span", { style: { flexShrink: 0, opacity: 0.7, display: "flex", alignItems: "center", gap: "4px" } },
-                    "🔍", h(Chevron, null))))),
+                    "🔍", h(Chevron, null)))))),
         selected !== FASTEST && !isFavorite(selected)
             ? Row(h(DFL.ButtonItem, {
                 layout: "below",
@@ -902,7 +1137,7 @@ function App() {
         DFL.PanelSection,
         { key: "account", title: t("account") },
         Row(h(DFL.Field, { label: lic.email || t("account.logged_in"), description: [lic.tier, lic.valid_until && `~${lic.valid_until}`].filter(Boolean).join(" · ") || undefined })),
-        Row(h(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: () => run(logout) }, t("logout"))),
+        Row(Opener("logout", h(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: () => confirmLogout(() => run(logout)) }, t("logout")))),
     ));
 
     const upd = s.update || {};
@@ -932,14 +1167,14 @@ function App() {
                 + (connected ? t("update.reconnect") : "")))
             : null,
         Row(h(DFL.ButtonItem, { layout: "below", disabled: busy, onClick: () => run(checkUpdate) }, t("update.check"))),
-        Row(h(DFL.ButtonItem, {
+        Row(Opener("uninstall", h(DFL.ButtonItem, {
             layout: "below",
             disabled: busy,
             onClick: () => confirmUninstall(() => {
                 setLocations([]);
                 run(uninstallCli);
             }),
-        }, t("uninstall.button"))),
+        }, t("uninstall.button")))),
     ));
 
     return panel(sections);
